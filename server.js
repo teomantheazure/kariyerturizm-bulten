@@ -4,6 +4,7 @@ const cors = require('cors'); // Buraya taşındı
 const db = require('./db');
 const { fetchAllSites } = require('./fetcher');
 const { summarize } = require('./summarizer');
+const cron = require('node-cron'); // YENİ EKLENDİ
 
 const app = express();
 app.use(cors()); // app tanımlandıktan hemen sonra çağrılmalı
@@ -304,6 +305,33 @@ app.get('/', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Sunucu http://localhost:${PORT} adresinde çalışıyor`);
-  // Sunucu ayağa kalktığında otomatik doldurmayı tetikle
+  
+  // 1. Sunucu başlarken veritabanı boşsa hemen doldur
   autoSeedDatabase();
+
+  // 2. Her 2 saatte bir yeni haberleri kontrol et ve ekle
+  cron.schedule('0 */2 * * *', async () => {
+    console.log('--- Zamanlanmış görev: Yeni haberler kontrol ediliyor ---');
+    try {
+      const articles = await fetchAllSites();
+      const insert = db.prepare(`
+        INSERT OR IGNORE INTO bulletin_cache (title, summary, source_name, source_url, image_url)
+        VALUES (?, ?, ?, ?, ?)
+      `);
+      const exists = db.prepare(`SELECT 1 FROM bulletin_cache WHERE source_url = ? LIMIT 1`);
+      
+      let added = 0;
+      for (const a of articles) {
+        if (exists.get(a.link)) continue; // Zaten varsa atla
+        const summary = await summarize(a);
+        insert.run(a.title, summary, a.source, a.link, a.image || null);
+        added++;
+      }
+      console.log(`--- ${added} yeni haber eklendi ---`);
+    } catch (err) {
+      console.error('Zamanlanmış görev hatası:', err);
+    }
+  });
+
+  console.log('Zamanlanmış görev aktif (her 2 saatte bir).');
 });
