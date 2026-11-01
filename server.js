@@ -1,16 +1,13 @@
 require('dotenv').config();
-
-
 const express = require('express');
-
-const cors = require('cors');
-app.use(cors()); // Tüm dış sitelerden gelen isteklere izin ver
-
+const cors = require('cors'); // Buraya taşındı
 const db = require('./db');
-const { fetchAllSites } = require('./fetcher'); // Otomatik doldurma için eklendi
-const { summarize } = require('./summarizer'); // Otomatik doldurma için eklendi
+const { fetchAllSites } = require('./fetcher');
+const { summarize } = require('./summarizer');
 
 const app = express();
+app.use(cors()); // app tanımlandıktan hemen sonra çağrılmalı
+
 const PORT = process.env.PORT || 3000;
 
 // Renk Paleti ve Logo Ayarları
