@@ -1,6 +1,8 @@
 require('dotenv').config();
 const express = require('express');
 const db = require('./db');
+const { fetchAllSites } = require('./fetcher'); // Otomatik doldurma için eklendi
+const { summarize } = require('./summarizer'); // Otomatik doldurma için eklendi
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -17,6 +19,38 @@ const SOURCE_STYLES = {
   'Default': { color: '#7F8C8D', bg: '#F5F5F5', domain: 'google.com' }
 };
 
+// --- OTOMATİK VERİTABANI DOLDURMA FONKSİYONU ---
+// Sunucu her başladığında (veya Render uyandığında) çalışır.
+async function autoSeedDatabase() {
+  const count = db.prepare(`SELECT COUNT(*) as count FROM bulletin_cache`).get().count;
+  
+  if (count === 0) {
+    console.log('Veritabanı boş. Otomatik haber çekme başlatılıyor...');
+    try {
+      const articles = await fetchAllSites();
+      console.log(`Toplam çekilen: ${articles.length}`);
+      
+      const insert = db.prepare(`
+        INSERT OR IGNORE INTO bulletin_cache (title, summary, source_name, source_url, image_url)
+        VALUES (?, ?, ?, ?, ?)
+      `);
+      
+      let added = 0;
+      for (const a of articles) {
+        const summary = await summarize(a);
+        insert.run(a.title, summary, a.source, a.link, a.image || null);
+        added++;
+      }
+      console.log(`Otomatik doldurma tamamlandı: ${added} haber eklendi.`);
+    } catch (err) {
+      console.error('Otomatik doldurma sırasında hata:', err);
+    }
+  } else {
+    console.log(`Veritabanında zaten ${count} haber var, çekmeye gerek yok.`);
+  }
+}
+
+// --- API ROTALARI ---
 app.get('/api/bulletin', (req, res) => {
   const limit = parseInt(req.query.limit) || 20;
   const offset = parseInt(req.query.offset) || 0;
@@ -37,8 +71,6 @@ app.get('/api/bulletin', (req, res) => {
   res.json({ total: totalCount, data: enrichedRows });
 });
 
-
-// Alt şerit için tüm haberleri getiren API
 app.get('/api/ticker', (req, res) => {
   const rows = db.prepare(`
     SELECT title, source_url, image_url, source_name
@@ -48,18 +80,17 @@ app.get('/api/ticker', (req, res) => {
   res.json(rows);
 });
 
+// --- ÖN YÜZ (HTML/CSS/JS) ---
 app.get('/', (req, res) => {
   res.send(`<!DOCTYPE html>
 <html lang="tr"><head><meta charset="utf-8">
 <title>Turizm Bülteni</title>
 <style>
-  /* Genel Sayfa Ayarları (Alt şerit için boşluk bırakıyoruz) */
   body { font-family: system-ui, -apple-system, sans-serif; max-width: 800px; margin: 40px auto 100px auto; padding: 0 16px; background: #f8f9fa; color: #333; }
   .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
   h1 { font-size: 24px; margin: 0; color: #1a1a1a; }
   .total { font-size: 14px; color: #666; background: #e9ecef; padding: 4px 10px; border-radius: 20px; }
   
-  /* Ana Liste Öğeleri */
   .item { background: #fff; border: 1px solid #e3e7ee; border-radius: 12px; padding: 0; margin-bottom: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.02); display: flex; overflow: hidden; }
   .thumb-container { width: 140px; min-height: 140px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background-size: cover; background-position: center; }
   .thumb-container img { width: 100%; height: 100%; object-fit: cover; }
@@ -108,10 +139,10 @@ app.get('/', (req, res) => {
   .ticker {
     display: flex;
     white-space: nowrap;
-    animation: marquee 1800s linear infinite; /* Yavaşlatıldı: 3*5 dakikada bir tam tur (180s*10)*/
-    padding-left: 120px; /* "SON DAKİKA" yazısının altına girmemesi için */
+    animation: marquee 180s linear infinite; /* Hız yavaşlatıldı */
+    padding-left: 120px; 
   }
-  .ticker:hover { animation-play-state: paused; } /* Üzerine gelince dursun */
+  .ticker:hover { animation-play-state: paused; }
   
   .ticker-item {
     display: inline-flex;
@@ -156,17 +187,14 @@ app.get('/', (req, res) => {
 <div id="loading">Daha fazla haber yükleniyor...</div>
 <div id="end">Tüm haberleri gördünüz.</div>
 
-<!-- SABİT ALT ŞERİT -->
 <div class="ticker-wrap">
   <div class="ticker-title">SON DAKİKA</div>
   <div class="ticker" id="ticker-content">
-    <!-- Haberler buraya gelecek -->
     <span style="color:#aaa; font-size:14px; margin-top:10px;">Haberler yükleniyor...</span>
   </div>
 </div>
 
 <script>
-  // --- ANA LİSTE YÜKLEME ---
   let offset = 0;
   const limit = 20;
   let isLoading = false;
@@ -227,20 +255,18 @@ app.get('/', (req, res) => {
     }
   }
 
-  // --- ALT ŞERİT YÜKLEME ---
   async function loadTicker() {
     try {
       const res = await fetch('/api/ticker');
       const data = await res.json();
       const ticker = document.getElementById('ticker-content');
-      ticker.innerHTML = ''; // Yükleniyor yazısını sil
+      ticker.innerHTML = '';
 
       if (data.length === 0) {
         ticker.innerHTML = '<span style="color:#aaa;">Henüz haber yok.</span>';
         return;
       }
 
-      // Haberleri şeride ekle (Kusursuz döngü için iki kez ekliyoruz)
       const renderItems = (items) => {
         return items.map(item => {
           const imgHtml = item.image_url 
@@ -255,13 +281,12 @@ app.get('/', (req, res) => {
         }).join('');
       };
 
-      ticker.innerHTML = renderItems(data) + renderItems(data); // Kesintisiz akış için çiftledik
+      ticker.innerHTML = renderItems(data) + renderItems(data);
     } catch (err) {
       console.error('Ticker yükleme hatası:', err);
     }
   }
 
-  // Başlat
   loadMore();
   loadTicker();
 
@@ -274,4 +299,8 @@ app.get('/', (req, res) => {
 </body></html>`);
 });
 
-app.listen(PORT, () => console.log(`Sunucu http://localhost:${PORT} adresinde çalışıyor`));
+app.listen(PORT, () => {
+  console.log(`Sunucu http://localhost:${PORT} adresinde çalışıyor`);
+  // Sunucu ayağa kalktığında otomatik doldurmayı tetikle
+  autoSeedDatabase();
+});
