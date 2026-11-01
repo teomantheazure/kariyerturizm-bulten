@@ -1,5 +1,11 @@
 require('dotenv').config();
+
+
 const express = require('express');
+
+const cors = require('cors');
+app.use(cors()); // Tüm dış sitelerden gelen isteklere izin ver
+
 const db = require('./db');
 const { fetchAllSites } = require('./fetcher'); // Otomatik doldurma için eklendi
 const { summarize } = require('./summarizer'); // Otomatik doldurma için eklendi
