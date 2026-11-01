@@ -139,7 +139,7 @@ app.get('/', (req, res) => {
   .ticker {
     display: flex;
     white-space: nowrap;
-    animation: marquee 180s linear infinite; /* Hız yavaşlatıldı */
+    animation: marquee 1920s linear infinite; /* Hız yavaşlatıldı */
     padding-left: 120px; 
   }
   .ticker:hover { animation-play-state: paused; }
